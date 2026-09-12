@@ -22,7 +22,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Check demo session from localStorage if Supabase is not connected
   useEffect(() => {
     let isMounted = true;
 
@@ -54,7 +53,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return;
         }
 
-        // Get initial session from Supabase
         const { data: { session: initialSession } } = await supabase.auth.getSession();
         if (isMounted) {
           setSession(initialSession);
@@ -66,7 +64,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
 
-        // Listen for auth state changes
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
           async (_event, newSession) => {
             if (!isMounted) return;
@@ -87,7 +84,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       } catch (err) {
         console.error('Auth initialization error:', err);
-        if (isMounted) setIsLoading(false);
+        if (isMounted) {
+          setProfile(null);
+          setIsAdmin(false);
+          setIsLoading(false);
+        }
       }
     }
 
@@ -111,12 +112,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setProfile(prof);
         setIsAdmin(prof.role === 'admin');
       } else {
-        // Fallback: If user is authenticated in Supabase, treat as admin for initial setup
-        setIsAdmin(true);
+        // A valid Supabase session is not enough to access the admin dashboard.
+        // The user must have an explicit admin profile.
+        setProfile(null);
+        setIsAdmin(false);
       }
     } catch (err) {
       console.warn('Profile fetch warning:', err);
-      setIsAdmin(true);
+      setProfile(null);
+      setIsAdmin(false);
     } finally {
       setIsLoading(false);
     }
@@ -126,7 +130,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(true);
     try {
       if (!isSupabaseConfigured) {
-        // Demo mode credentials check
         if (email.toLowerCase().includes('admin') || password === 'admin123' || password.length >= 6) {
           localStorage.setItem('zahra_demo_admin_auth', 'true');
           setIsAdmin(true);
@@ -167,6 +170,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (data.user) {
         await fetchProfile(data.user.id);
+
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', data.user.id)
+          .single();
+
+        if (profileData?.role !== 'admin') {
+          await supabase.auth.signOut();
+          setUser(null);
+          setSession(null);
+          setProfile(null);
+          setIsAdmin(false);
+          setIsLoading(false);
+          return { error: new Error('Access denied. This account is not an administrator.') };
+        }
       }
 
       return { error: null };
